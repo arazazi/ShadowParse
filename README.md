@@ -13,7 +13,7 @@
 ## 🚀 Installation
 
 1. **Clone the repository:**
-   ```bash
+```
    git clone [https://github.com/YOUR_USERNAME/ShadowParse.git](https://github.com/YOUR_USERNAME/ShadowParse.git)
    cd ShadowParse
 
@@ -24,7 +24,6 @@
 pip install -r requirements.txt
 
 ```
-
 
 
 ## 🛠️ Usage
@@ -55,5 +54,3 @@ ShadowParse generates a structured report folder containing:
 ## ⚖️ License
 
 This project is licensed under the MIT License.
-
-```
