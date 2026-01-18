@@ -1,5 +1,4 @@
-```markdown
-# ShadowParse: The Luxe PCAP Forensics Engine 🕵️‍♂️🛡️
+## ShadowParse: The Luxe PCAP Forensics Engine 🕵️‍♂️🛡️
 
 **ShadowParse** is a high-performance PCAP analysis and forensics tool designed for security researchers and CTF players. It combines deep packet inspection (DPI) with the **DeepRead Integration**, an automated multi-layered decoding engine.
 
