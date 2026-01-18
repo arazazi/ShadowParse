@@ -1,0 +1,4 @@
+shadow_deepscan_report/
+__pycache__/
+*.pcap
+*.pcapng
