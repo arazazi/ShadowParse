@@ -14,15 +14,13 @@
 
 1. **Clone the repository:**
 ```
-   git clone [https://github.com/YOUR_USERNAME/ShadowParse.git](https://github.com/YOUR_USERNAME/ShadowParse.git)
+   git clone https://github.com/arazazi/ShadowParse.git
    cd ShadowParse
-
 ```
 
 2. **Install dependencies:**
 ```bash
 pip install -r requirements.txt
-
 ```
 
 
