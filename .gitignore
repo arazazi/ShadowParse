@@ -2,3 +2,8 @@ shadow_deepscan_report/
 __pycache__/
 *.pcap
 *.pcapng
+ctf_config.yaml
+flag_submissions.log
+ctf_analysis.md
+auto_solver_results.txt
+suggested_tools.txt

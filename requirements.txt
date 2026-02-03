@@ -2,3 +2,10 @@ scapy
 pandas
 rich
 chardet
+pwntools>=4.11.0
+qrcode>=7.4.2
+pillow>=10.0.0
+pyzbar>=0.1.9
+python-magic>=0.4.27
+requests>=2.31.0
+pyyaml>=6.0.1
