@@ -65,6 +65,17 @@ from rich.panel import Panel
 from rich.text import Text
 from rich.progress import track
 
+# CTF Mode imports (optional)
+try:
+    from ctf_solvers import CTFAutoSolver
+    from ctf_categorizer import ChallengeCategorizer
+    from hint_engine import HintEngine
+    from ctf_submission import FlagSubmitter, create_config_template
+    CTF_MODULES_AVAILABLE = True
+except ImportError:
+    CTF_MODULES_AVAILABLE = False
+    print("Warning: CTF modules not available. Install dependencies for CTF mode.")
+
 console = Console(record=True)
 VERSION = "5.0.0-feature-complete" # Final version number for new features!
 
@@ -615,12 +626,18 @@ class UltimateEncodingDetector:
 
 # ------------------------------ SHADOW ENGINE ------------------------------
 class ShadowEngine:
-    def __init__(self, pcap_path: str, basic_scan: bool = False): # NEW: basic_scan parameter
+    def __init__(self, pcap_path: str, basic_scan: bool = False, ctf_mode: bool = False, 
+                 auto_solve: bool = False, config_path: Optional[str] = None): # NEW: CTF parameters
         self.pcap = Path(pcap_path)
         self.basic_scan = basic_scan # NEW: Store scan mode
+        self.ctf_mode = ctf_mode  # NEW: CTF mode flag
+        self.auto_solve = auto_solve  # NEW: Auto-solve flag
+        self.config_path = config_path  # NEW: Config file path
         
         scan_type = "Basic Scan (v2.0.0)" if self.basic_scan else "Deep Scan (v5.0.0)"
         version_str = "2.0.0-giga" if self.basic_scan else VERSION
+        if self.ctf_mode:
+            scan_type += " [CTF Mode]"
         console.print(f"[bold magenta]ShadowParse v{version_str}[/] | {scan_type} | Loading packets, this might take a moment...")
         self.packets = rdpcap(str(self.pcap))
         self.total_packets = len(self.packets)
@@ -638,6 +655,24 @@ class ShadowEngine:
         self.high_entropy_data: List[Dict] = []
         self.deepread_decodes: List[Dict] = [] # Only used in Deep Scan
         self.unique_ports = set() # NEW: To track all unique ports seen
+        
+        # CTF Mode structures
+        self.ctf_solver_results: List[Dict] = []
+        self.challenge_category: Optional[Dict] = None
+        self.ctf_hints: List[Dict] = []
+        
+        # Initialize CTF modules if enabled
+        if self.ctf_mode and CTF_MODULES_AVAILABLE:
+            self.ctf_solver = CTFAutoSolver() if self.auto_solve else None
+            self.categorizer = ChallengeCategorizer()
+            self.hint_engine = HintEngine()
+            self.flag_submitter = FlagSubmitter(config_path) if config_path else None
+            console.print("[bold cyan]✓ CTF Mode enabled with auto-solver and hint engine[/]")
+        else:
+            self.ctf_solver = None
+            self.categorizer = None
+            self.hint_engine = None
+            self.flag_submitter = None
 
         # Deep Scan only structures
         if not self.basic_scan:
@@ -1209,9 +1244,13 @@ class ShadowEngine:
         console.print(f"[green]📝 Markdown report saved → {md_file}")
 
 
-    def run(self, out: str):
+    def run(self, out: str, show_hints: bool = False, submit_flags: bool = False):
         out_path = Path(out)
         self.dissect()
+        
+        # Run CTF analysis if enabled
+        if self.ctf_mode and CTF_MODULES_AVAILABLE:
+            self._run_ctf_analysis(submit_flags)
         
         # Save all the new enriched data
         self.save_json(out_path)
@@ -1221,13 +1260,183 @@ class ShadowEngine:
         
         if not self.basic_scan:
             self.save_filtered_pcap(out_path)
-            self.save_decoded_text_file(out_path) 
+            self.save_decoded_text_file(out_path)
+        
+        # Save CTF-specific outputs
+        if self.ctf_mode and CTF_MODULES_AVAILABLE:
+            self._save_ctf_outputs(out_path, show_hints)
 
         console.print(Panel(Text("🎉 ShadowParse Scan Complete!", justify="center", style="bold green reverse"),
                             border_style="green", expand=False))
         
         absolute_path = out_path.absolute()
         console.print(f"[bold white]Results saved to folder:[/bold white] [underline blue]{absolute_path}[/underline blue]")
+    
+    def _run_ctf_analysis(self, submit_flags: bool = False):
+        """Run CTF-specific analysis"""
+        console.print("[bold cyan]Running CTF Analysis...[/]")
+        
+        # Run auto-solver on high entropy data and extracted files
+        if self.auto_solve and self.ctf_solver:
+            console.print("[cyan]Running auto-solvers...[/]")
+            for entry in self.high_entropy_data[:10]:  # Limit to top 10
+                try:
+                    data = bytes.fromhex(entry['payload'][:2000])  # Limit size
+                    results = self.ctf_solver.run_all_solvers(data)
+                    if results:
+                        self.ctf_solver_results.append({
+                            'source': f"High entropy packet {entry['pkt_num']}",
+                            'results': results
+                        })
+                except Exception:
+                    pass
+            
+            # Run solvers on extracted files
+            for file_data in self.file_extractions[:5]:  # Limit to 5 files
+                try:
+                    payload = file_data.get('payload', b'')
+                    if len(payload) > 0 and len(payload) < 100000:  # Max 100KB
+                        results = self.ctf_solver.run_all_solvers(payload)
+                        if results:
+                            self.ctf_solver_results.append({
+                                'source': f"File: {file_data.get('filename', 'unknown')}",
+                                'results': results
+                            })
+                except Exception:
+                    pass
+        
+        # Categorize the challenge
+        if self.categorizer:
+            analysis_data = self._prepare_analysis_data()
+            self.challenge_category = self.categorizer.analyze_and_categorize(analysis_data)
+            console.print(f"[green]✓ Challenge categorized as: {self.challenge_category['primary_category']} "
+                         f"(confidence: {self.challenge_category['primary_confidence']:.2f})[/]")
+        
+        # Generate hints
+        if self.hint_engine:
+            analysis_data = self._prepare_analysis_data()
+            self.ctf_hints = self.hint_engine.generate_hints(analysis_data)
+            console.print(f"[green]✓ Generated {len(self.ctf_hints)} contextual hints[/]")
+        
+        # Submit flags if enabled
+        if submit_flags and self.flag_submitter and self.flag_submitter.is_enabled():
+            console.print("[cyan]Submitting flags...[/]")
+            for flag in self.flags[:5]:  # Limit submissions
+                result = self.flag_submitter.submit_flag(flag, require_confirmation=False)
+                if result['success']:
+                    console.print(f"[green]✓ Flag accepted: {flag}[/]")
+                else:
+                    console.print(f"[yellow]✗ Flag submission failed: {result.get('message')}[/]")
+    
+    def _prepare_analysis_data(self) -> Dict[str, Any]:
+        """Prepare data for CTF analysis"""
+        # Count keywords
+        keywords = {}
+        for entry in self.weird:
+            note = entry.get('note', '').lower()
+            for keyword in SUSP_KEYWORDS:
+                if keyword in note:
+                    keywords[keyword] = keywords.get(keyword, 0) + 1
+        
+        # Detect patterns
+        sql_patterns = ['union', 'select', 'or 1=1']
+        xss_patterns = ['<script>', 'javascript:']
+        
+        sql_detected = any(any(p in entry.get('note', '').lower() for p in sql_patterns) for entry in self.weird)
+        xss_detected = any(any(p in entry.get('note', '').lower() for p in xss_patterns) for entry in self.weird)
+        
+        # Count file types
+        image_files = sum(1 for f in self.file_extractions if 'image' in f.get('content_type', '').lower())
+        audio_files = sum(1 for f in self.file_extractions if 'audio' in f.get('content_type', '').lower())
+        executable_files = sum(1 for f in self.file_extractions 
+                              if any(ext in f.get('filename', '').lower() 
+                                    for ext in ['.exe', '.dll', '.so', '.elf']))
+        
+        return {
+            'high_entropy_count': len(self.high_entropy_data),
+            'flags_found': len(self.flags),
+            'keywords': keywords,
+            'base64_patterns': sum(1 for d in self.deepread_decodes if 'base64' in d.get('encoding', '').lower()),
+            'hex_patterns': sum(1 for d in self.deepread_decodes if 'hex' in d.get('encoding', '').lower()),
+            'encoding_layers': max((d.get('depth', 0) for d in self.deepread_decodes), default=0),
+            'files_extracted': len(self.file_extractions),
+            'suspicious_packets': len(self.weird),
+            'protocols_count': len(self.protocols_summary),
+            'http_requests': len(self.http_requests),
+            'sql_injection_detected': sql_detected,
+            'xss_detected': xss_detected,
+            'dns_queries': len(self.dns_queries),
+            'unusual_dns': len([q for q in self.dns_queries if len(q) > 50 or '.' not in q[-10:]]),
+            'unusual_ports': [p for p in self.unique_ports if p > 1024 and p not in COMMON_PORTS],
+            'image_files': image_files,
+            'audio_files': audio_files,
+            'executable_files': executable_files,
+            'successful_decodes': len([d for d in self.deepread_decodes if d.get('success', False)]),
+            'base64_non_printable': any('base64' in d.get('encoding', '').lower() and 
+                                       not all(c in string.printable for c in d.get('decoded', '')[:100])
+                                       for d in self.deepread_decodes),
+        }
+    
+    def _save_ctf_outputs(self, out_path: Path, show_hints: bool):
+        """Save CTF-specific output files"""
+        out_path.mkdir(exist_ok=True)
+        
+        # Save auto-solver results
+        if self.ctf_solver_results:
+            solver_file = out_path / "auto_solver_results.txt"
+            with open(solver_file, 'w') as f:
+                f.write("=== Auto-Solver Results ===\n\n")
+                for result in self.ctf_solver_results:
+                    f.write(f"Source: {result['source']}\n")
+                    f.write("-" * 60 + "\n")
+                    for method, findings in result['results'].items():
+                        f.write(f"\n{method}:\n")
+                        for finding in findings[:3]:  # Top 3 per method
+                            f.write(f"  - Result: {finding.get('result', '')[:200]}\n")
+                            f.write(f"    Confidence: {finding.get('confidence', 0):.2f}\n")
+                    f.write("\n" + "=" * 60 + "\n\n")
+        
+        # Save CTF analysis
+        ctf_analysis_file = out_path / "ctf_analysis.md"
+        with open(ctf_analysis_file, 'w') as f:
+            f.write("# CTF Challenge Analysis\n\n")
+            
+            if self.challenge_category:
+                f.write("## Challenge Category\n\n")
+                f.write(f"**Primary Category:** {self.challenge_category['primary_category']} ")
+                f.write(f"(Confidence: {self.challenge_category['primary_confidence']:.2%})\n\n")
+                if self.challenge_category['secondary_category']:
+                    f.write(f"**Secondary Category:** {self.challenge_category['secondary_category']} ")
+                    f.write(f"(Confidence: {self.challenge_category['secondary_confidence']:.2%})\n\n")
+                
+                f.write(f"\n{self.categorizer.get_category_description(self.challenge_category['primary_category'])}\n\n")
+            
+            if show_hints and self.ctf_hints:
+                f.write("## Progressive Hints\n\n")
+                for i, hint in enumerate(self.ctf_hints, 1):
+                    level_emoji = {"basic": "💡", "intermediate": "🔍", "advanced": "🎯"}
+                    emoji = level_emoji.get(hint.get('level', 'basic'), '💡')
+                    f.write(f"{i}. {emoji} **[{hint.get('level', 'basic').upper()}]** {hint.get('hint', '')}\n\n")
+            
+            if self.challenge_category:
+                f.write("## Recommended Tools\n\n")
+                tools = self.hint_engine.get_tool_recommendations(self.challenge_category['primary_category'])
+                for tool in tools:
+                    f.write(f"- {tool}\n")
+                f.write("\n")
+        
+        # Save tool recommendations
+        if self.challenge_category:
+            tools_file = out_path / "suggested_tools.txt"
+            with open(tools_file, 'w') as f:
+                f.write(f"Recommended Tools for {self.challenge_category['primary_category']}:\n\n")
+                tools = self.hint_engine.get_tool_recommendations(self.challenge_category['primary_category'])
+                for tool in tools:
+                    f.write(f"- {tool}\n")
+        
+        # Save flag submission log
+        if self.flag_submitter:
+            self.flag_submitter.save_submission_log(out_path)
 
 
 # ---------- CLI ----------
@@ -1242,6 +1451,19 @@ def main():
                              "to save to external storage. (default: shadow_deepscan_report)") # Storage help added
     parser.add_argument("-b", "--basic-scan", action="store_true",
                         help="Run in fast Basic Scan mode, skipping full TCP reconstruction and deep cipher analysis.") # New feature
+    
+    # CTF Mode arguments
+    parser.add_argument("--ctf-mode", action="store_true",
+                        help="Enable CTF-specific features (categorization, hints, enhanced reporting)")
+    parser.add_argument("--auto-solve", action="store_true",
+                        help="Run auto-solver tools (ROT, XOR, substitution ciphers, etc.)")
+    parser.add_argument("--submit-flags", action="store_true",
+                        help="Enable flag submission to CTF platforms (requires --config)")
+    parser.add_argument("--hints", action="store_true",
+                        help="Show progressive hints based on findings")
+    parser.add_argument("--config", type=str, default=None,
+                        help="Path to CTF configuration file (ctf_config.yaml)")
+    
     args = parser.parse_args()
 
     # --- Basic Input Validation (PCAP) ---
@@ -1269,10 +1491,21 @@ def main():
                           f"Check permissions or ensure the drive is not mounted read-only. Details: {e}")
             sys.exit(1)
 
+    # Create config template if needed
+    if args.ctf_mode and args.config and not Path(args.config).exists():
+        console.print(f"[yellow]Config file not found. Creating template at {args.config}[/yellow]")
+        if CTF_MODULES_AVAILABLE:
+            create_config_template(Path(args.config).parent)
 
-    # Run the engine (passing the basic_scan flag)
-    engine = ShadowEngine(args.file, basic_scan=args.basic_scan)
-    engine.run(args.output)
+    # Run the engine (passing CTF parameters)
+    engine = ShadowEngine(
+        args.file, 
+        basic_scan=args.basic_scan,
+        ctf_mode=args.ctf_mode or args.auto_solve or args.hints,  # Enable CTF mode if any CTF flag is set
+        auto_solve=args.auto_solve,
+        config_path=args.config
+    )
+    engine.run(args.output, show_hints=args.hints, submit_flags=args.submit_flags)
 
 
 if __name__ == "__main__":
