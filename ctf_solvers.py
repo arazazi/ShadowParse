@@ -257,8 +257,17 @@ class CTFAutoSolver:
             return results
         
         try:
+            # Validate architecture
+            valid_archs = ['i386', 'amd64', 'x86_64', 'arm', 'aarch64', 'mips']
+            if arch not in valid_archs:
+                arch = 'i386'  # Default to i386
+            
             context.arch = arch
-            context.bits = 32 if arch == 'i386' else 64
+            # Set appropriate bits based on architecture
+            if arch in ['i386', 'arm', 'mips']:
+                context.bits = 32
+            else:  # amd64, x86_64, aarch64
+                context.bits = 64
             
             disassembly = disasm(data)
             if disassembly:

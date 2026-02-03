@@ -1281,13 +1281,16 @@ class ShadowEngine:
             console.print("[cyan]Running auto-solvers...[/]")
             for entry in self.high_entropy_data[:10]:  # Limit to top 10
                 try:
-                    data = bytes.fromhex(entry['payload'][:2000])  # Limit size
-                    results = self.ctf_solver.run_all_solvers(data)
-                    if results:
-                        self.ctf_solver_results.append({
-                            'source': f"High entropy packet {entry['pkt_num']}",
-                            'results': results
-                        })
+                    payload_hex = entry['payload'][:2000]  # Limit size
+                    # Validate hex string before conversion
+                    if all(c in '0123456789abcdefABCDEF' for c in payload_hex) and len(payload_hex) % 2 == 0:
+                        data = bytes.fromhex(payload_hex)
+                        results = self.ctf_solver.run_all_solvers(data)
+                        if results:
+                            self.ctf_solver_results.append({
+                                'source': f"High entropy packet {entry['pkt_num']}",
+                                'results': results
+                            })
                 except Exception:
                     pass
             
@@ -1366,7 +1369,7 @@ class ShadowEngine:
             'sql_injection_detected': sql_detected,
             'xss_detected': xss_detected,
             'dns_queries': len(self.dns_queries),
-            'unusual_dns': len([q for q in self.dns_queries if len(q) > 50 or '.' not in q[-10:]]),
+            'unusual_dns': [q for q in self.dns_queries if len(q) > 50 or (len(q) >= 10 and '.' not in q[-10:])],
             'unusual_ports': [p for p in self.unique_ports if p > 1024 and p not in COMMON_PORTS],
             'image_files': image_files,
             'audio_files': audio_files,
@@ -1404,10 +1407,10 @@ class ShadowEngine:
             if self.challenge_category:
                 f.write("## Challenge Category\n\n")
                 f.write(f"**Primary Category:** {self.challenge_category['primary_category']} ")
-                f.write(f"(Confidence: {self.challenge_category['primary_confidence']:.2%})\n\n")
+                f.write(f"(Confidence: {self.challenge_category['primary_confidence']*100:.2f}%)\n\n")
                 if self.challenge_category['secondary_category']:
                     f.write(f"**Secondary Category:** {self.challenge_category['secondary_category']} ")
-                    f.write(f"(Confidence: {self.challenge_category['secondary_confidence']:.2%})\n\n")
+                    f.write(f"(Confidence: {self.challenge_category['secondary_confidence']*100:.2f}%)\n\n")
                 
                 f.write(f"\n{self.categorizer.get_category_description(self.challenge_category['primary_category'])}\n\n")
             

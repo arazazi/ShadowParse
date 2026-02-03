@@ -186,14 +186,15 @@ class HintEngine:
             hints.append(self._get_hint('encoding', 'multiple_encoding_layers'))
         
         # DNS hints
-        if analysis_results.get('unusual_dns_count', 0) > 0:
+        unusual_dns_list = analysis_results.get('unusual_dns', [])
+        if len(unusual_dns_list) > 0:
             if analysis_results.get('dns_pattern_detected', False):
                 hints.append(self._get_hint('dns', 'dns_pattern'))
             else:
                 hints.append(self._get_hint('dns', 'unusual_dns'))
         
         # File hints
-        if analysis_results.get('images_extracted', 0) > 0:
+        if analysis_results.get('image_files', 0) > 0:
             hints.append(self._get_hint('files', 'images_extracted'))
         
         # Network hints

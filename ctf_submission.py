@@ -198,10 +198,11 @@ class FlagSubmitter:
         headers = config.get('webhook_headers', {})
         headers['Content-Type'] = 'application/json'
         
+        from datetime import datetime
         data = {
             'flag': flag,
             'challenge_id': challenge_id,
-            'timestamp': str(Path.cwd())  # Just as placeholder
+            'timestamp': datetime.now().isoformat()
         }
         
         try:
